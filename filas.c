@@ -13,6 +13,7 @@
 #include "queue.h"
 #include <stdio.h>
 
+// Definições de pinos
 #define I2C_PORT i2c1
 #define I2C_SDA 14
 #define I2C_SCL 15
@@ -24,44 +25,50 @@
 #define LED_GREEN  11
 #define BUZZER_PIN 10
 
+// Tipo de dado para encapsular as leituras do joystick
 typedef struct
 {
 uint8_t x;
 uint8_t y;
 } joystick_data_t;
 
+// Fila para compartilhar os dados do joystick entre as tasks
 QueueHandle_t xQueueJoystickData;
 
-void vJoystickTask(void *params)
+// Task responsável por ler o joystick periodicamente
+void vJoystickTask(void *params) 
 {
-    adc_gpio_init(ADC_JOYSTICK_Y);
-    adc_gpio_init(ADC_JOYSTICK_X);
+    adc_gpio_init(ADC_JOYSTICK_Y);  
+    adc_gpio_init(ADC_JOYSTICK_X); 
     adc_init();
 
     joystick_data_t joydata;
 
     while (true)
     {
-        adc_select_input(0); // GPIO 26 = ADC0
+        adc_select_input(0); // Leitura eixo Y (GPIO 26)
         uint16_t y_pos = adc_read();
 
-        adc_select_input(1); // GPIO 27 = ADC1
+        adc_select_input(1); // Leitura eixo X (GPIO 26)
         uint16_t x_pos = adc_read();
 
+         // Normaliza valores para faixa de 0-100
         int16_t x_raw = x_pos - 2048;
             if (x_raw < 0) x_raw = 0;
             joydata.x = (x_raw * 100) / 2047;
 
         uint16_t y_raw = 2048 - y_pos;
-            if (y_raw < 0) y_raw = 0; // Módulo
+            if (y_raw < 0) y_raw = 0; 
             if (y_raw > 2047) y_raw = 2047; 
             joydata.y = (y_raw * 100) / 2047;
 
+        // Envia leitura para a fila compartilhada    
         xQueueSend(xQueueJoystickData, &joydata, 0); // Envia o valor do joystick para a fila
         vTaskDelay(pdMS_TO_TICKS(100));              // 10 Hz de leitura
     }
 }
 
+// Task para exibir informações no display OLED com base nas leituras do joystick
 void vDisplayTask(void *params)
 {
     i2c_init(I2C_PORT, 400 * 1000);
@@ -81,6 +88,7 @@ void vDisplayTask(void *params)
     {
         if (xQueueReceive(xQueueJoystickData, &joydata, portMAX_DELAY) == pdTRUE)
         {
+            // Alertas de enchente ou chuva
             if(joydata.x >= 80){
                 ssd1306_fill(&ssd, !cor);
                 ssd1306_draw_string(&ssd, "ALERTA", 40, 20);
@@ -96,8 +104,9 @@ void vDisplayTask(void *params)
                 ssd1306_send_data(&ssd);
             } 
             else{
+                // Gráfico de barras indicando valores
                 ssd1306_fill(&ssd, !cor);
-                ssd1306_draw_string(&ssd, "Nivel de agua", 3, 10);  // Desenha uma string
+                ssd1306_draw_string(&ssd, "Nivel de agua", 3, 10); 
                 ssd1306_rect(&ssd, 20, 3, 100, 12, true, false);
                 ssd1306_line(&ssd, 82, 115, 82, 125, cor);  
                 ssd1306_draw_string(&ssd, "Volume de chuva", 3, 40); 
@@ -111,14 +120,14 @@ void vDisplayTask(void *params)
     }
 }
 
+// Task que controla a matriz de LEDs e o buzzer com base nos dados recebidos
 void vMatrizTask(void *params)
 {
     PIO pio = pio_config();
 
-    const uint16_t period = 20000; //  20ms = 20000 ticks
-    const float DIVIDER_PWM = 125.0; //Divisor de clock
     uint slice_num;
 
+    // Configuração do PWM para o buzzer
     gpio_set_function(BUZZER_PIN, GPIO_FUNC_PWM);
     slice_num = pwm_gpio_to_slice_num(BUZZER_PIN);
   
@@ -133,6 +142,7 @@ void vMatrizTask(void *params)
     {
         if (xQueueReceive(xQueueJoystickData, &joydata, portMAX_DELAY) == pdTRUE)
         {
+            // Exibe número e toca beep (alerta chuva forte)
             if(joydata.x >= 80){
                 define_numero(1, pio, 0);
                 pwm_set_chan_level(slice, chan, 150);
@@ -142,6 +152,7 @@ void vMatrizTask(void *params)
                 pwm_set_chan_level(slice, chan, 0);
                 vTaskDelay(pdMS_TO_TICKS(500));
             }
+            // Exibe outro número e beep mais rápido (alerta enchente)
             else if(joydata.y >= 70){
                 define_numero(2, pio, 0);
                 pwm_set_chan_level(slice, chan, 150);
@@ -151,6 +162,7 @@ void vMatrizTask(void *params)
                 pwm_set_chan_level(slice, chan, 0);
                 vTaskDelay(pdMS_TO_TICKS(250));
             } 
+            // Desliga buzzer e limpa matriz
             else{
                 define_numero(0, pio, 0);
                 pwm_set_chan_level(slice, chan, 0);
@@ -160,6 +172,7 @@ void vMatrizTask(void *params)
     }
 }
 
+// Task que acende o LED vermelho quando valores excedem limite
 void vLedRedTask(void *params)
 {
     gpio_init(LED_RED);
